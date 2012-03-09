@@ -9,6 +9,7 @@
   <review status="unreviewed" notes=""/>
   <url>http://ros.org/wiki/jrl_qp_controller</url>
   <depend package="jrl_controller_manager"/>
+  <depend package="jrl_dynamics_urdf"/>
   <depend package="roscpp"/>
   <depend package="sensor_msgs"/>
 

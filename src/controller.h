@@ -26,6 +26,9 @@ namespace jrl_qp_controller {
 
     void compute_control();
 
+    void set_time_step(double in_time_step);
+
+    void initialize_task();
 			 
     std::vector<double> command_;
     jrl_controller_manager::JrlControl * msg_;
