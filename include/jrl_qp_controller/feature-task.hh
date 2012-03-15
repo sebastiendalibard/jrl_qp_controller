@@ -2,6 +2,7 @@
 #define JRL_QP_CONTROLLER_FEATURE_TASK_HH
 
 #include <jrl_qp_controller/task.hh>
+#include <ros/ros.h>
 
 namespace jrl_qp_controller {
 
@@ -22,6 +23,10 @@ namespace jrl_qp_controller {
   protected:
     matrixNxP jacobian_;
     vectorN value_;
+    matrixNxP last_jacobian_;
+    matrixNxP d_jacobian_;
+    ros::Time last_robot_update_;
+
   };
 } // end of namespace jrl_qp_controller
 

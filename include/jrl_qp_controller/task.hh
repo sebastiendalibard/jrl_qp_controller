@@ -28,29 +28,35 @@ namespace jrl_qp_controller {
     {}
 
     const std::vector< std::vector<double> > & get_d() const
-    { return d_; }
+    { return D_; }
 
     const std::vector<double> & get_c() const
     { return c_; }
 
     virtual void compute_objective() = 0;
 
-    EVariables concerned_variables()
+    EVariables concerned_variables() const
     { return concerned_variables_; }
 
-    double weight()
+    double weight() const
     { return weight_; }
 
     void weight(double i_weight)
     { weight_ = i_weight; }
 
+    bool has_quadratic_part() const
+    { return has_quadratic_part_; }
+
+    bool has_linear_part() const
+    { return has_linear_part_; }
+    
   protected:
     CjrlDynamicRobot * robot_;
     EVariables concerned_variables_;
     bool has_quadratic_part_;
     bool has_linear_part_;
-    std::vector< std::vector<double> > d_;
-    std::vector c_;
+    std::vector< std::vector<double> > D_;
+    std::vector<double> c_;
     double weight_;
   };
 
