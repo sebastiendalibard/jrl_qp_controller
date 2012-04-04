@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 2.4.6)
 include($ENV{ROS_ROOT}/core/rosbuild/rosbuild.cmake)
+INCLUDE(cmake/base.cmake)
 
 # Set the build type.  Options are:
 #  Coverage       : w/ debug symbols, w/o optimization, w/ code-coverage
@@ -21,6 +22,8 @@ else()
     message(STATUS "This program requires the CGAL library, and will not be compiled.")
 endif()
 
+ADD_REQUIRED_DEPENDENCY("hpp-gik >= 2.7")
+
 rosbuild_init()
 
 #set the default path for built executables to the "bin" directory
@@ -34,9 +37,20 @@ set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/lib)
 #rosbuild_gensrv()
 
 #common commands for building c++ executables and libraries
-rosbuild_add_library(${PROJECT_NAME} src/problem.cc)
+
+rosbuild_add_library(${PROJECT_NAME} 
+  src/problem.cc 
+  src/min-torque-task.cc 
+  src/feature-task.cc
+  src/gik-feature-task.cc
+  src/contact-constraint.cc 
+  src/position-task.cc
+  src/transformation-task.cc)
+
+PKG_CONFIG_USE_DEPENDENCY(${PROJECT_NAME} hpp-gik)
+
 #target_link_libraries(${PROJECT_NAME} another_library)
-#rosbuild_add_boost_directories()
-#rosbuild_link_boost(${PROJECT_NAME} thread)
+rosbuild_add_boost_directories()
+rosbuild_link_boost(${PROJECT_NAME} thread)
 rosbuild_add_executable(controller src/controller.cpp)
-#target_link_libraries(example ${PROJECT_NAME})
+target_link_libraries(controller ${PROJECT_NAME})

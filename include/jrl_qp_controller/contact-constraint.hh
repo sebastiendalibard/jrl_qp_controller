@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <ros/ros.h>
+#include <abstract-robot-dynamics/dynamic-robot.hh>
 
 namespace jrl_qp_controller {
 
@@ -12,9 +13,11 @@ namespace jrl_qp_controller {
 		      CjrlJoint *i_joint,
 		      vector3d i_contact_point,
 		      std::vector<vector3d> &i_polygon,
-		      vector3d i_contact_normal);
+		      matrix4d &i_contact_transformation);
     ~ContactConstraint();
     
+    void update_jacobian();
+
     /*
        Robot 
     */
@@ -32,19 +35,21 @@ namespace jrl_qp_controller {
     */
     vector3d contact_point_;
 
+    /* 
+       Points defining the convex hull in which the
+       center of pressure has to stay.
+       Expressed in contact_transformation_ frame.
+    */
+    std::vector<vector3d> contact_polygon_;
+
+
     /*
       Global transformation of the contact point.
       This frame z is orthogonal to the contact plane.
     */
     matrix4d contact_transformation_;
 
-    /* 
-       Points defining the convex hull in which the
-       center of pressure has to stay.
-       Expressed in contact_transformation_ frame.
-    */
-    std::vector<vector3d> contact_polygon;
-
+  
     /*
       contact jacobian
     */
@@ -61,7 +66,7 @@ namespace jrl_qp_controller {
     matrixNxP d_jacobian_;
 
     ros::Time last_robot_update_;
-
+    bool first_call_;
   };
 } //end of namespace jrl_qp_controller
 

@@ -22,13 +22,6 @@ namespace jrl_qp_controller {
 
     void compute_robot_dynamics();
 
-    void compute_objective();
-
-    void compute_control();
-
-    void set_time_step(double in_time_step);
-
-    void initialize_task();
 			 
     std::vector<double> command_;
     jrl_controller_manager::JrlControl * msg_;
@@ -41,22 +34,6 @@ namespace jrl_qp_controller {
     vectorN current_velocity_;
     vectorN current_acceleration_;
 
-    //TEMP: Before specific task code is developped.
-    matrixNxP last_pos_jacobian_;
-    matrixNxP last_contact_jacobian_;
-    matrixNxP derivative_pos_jacobian_;
-    bool pos_jacobian_computed_;
-    double dt_;
-    
-    //Joint concerned with the position task
-    CjrlJoint * constrained_joint_;
-    vector3d local_point_;
-    vectorN target_;
-
-    // qp system 
-    matrixNxP D_;
-    vectorN c_; // 1xn matrix
-    double c0_; //needed?
   };
 
 }  //end of namespace jrl_qp_controller

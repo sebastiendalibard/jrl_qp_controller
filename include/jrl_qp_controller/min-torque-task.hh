@@ -20,6 +20,7 @@ namespace jrl_qp_controller {
 
   protected:
     std::vector<double> joint_torque_weights_;
+    bool objective_computed_;
 
   };
 } //end of namespace jrl_qp_controller
