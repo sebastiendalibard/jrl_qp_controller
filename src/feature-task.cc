@@ -1,6 +1,7 @@
 #include <jrl/mal/matrixabstractlayer.hh>
-
 #include <jrl_qp_controller/feature-task.hh>
+
+#include <ros/console.h>
 
 namespace jrl_qp_controller {
 
@@ -28,6 +29,11 @@ namespace jrl_qp_controller {
     noalias(c_) = 2*prod(MAL_RET_TRANSPOSE(jacobian_),
 			 prod(d_jacobian_,robot_->currentVelocity()) 
 			 - desired_acceleration) ;
+
+    ROS_DEBUG_STREAM("task: " << this);
+    ROS_DEBUG_STREAM("desired acceleration: " << desired_acceleration);
+    ROS_DEBUG_STREAM("D: " << D_);
+    ROS_DEBUG_STREAM("c: " << c_);    
   }
   
   void

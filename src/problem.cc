@@ -1,6 +1,11 @@
+# include <boost/date_time/posix_time/posix_time.hpp>
+
 #include <algorithm>
 
 #include "CGAL/exceptions.h"
+
+#include <ros/console.h>
+#include <sstream>
 
 #include <jrl/mal/matrixabstractlayer.hh>
 
@@ -15,15 +20,6 @@ namespace jrl_qp_controller {
   Problem::Problem(CjrlDynamicRobot * i_robot)
     :robot_(i_robot)
   {
-    actuated_dofs_.resize(robot_->numberDof(),false);
-    vector<CjrlJoint*> actuated_joints = robot_->getActuatedJoints();
-    for(vector<CjrlJoint*>::iterator joint_it = actuated_joints.begin();
-	joint_it != actuated_joints.end();
-	++joint_it) {
-      for(unsigned int i = 0; i < (*joint_it)->numberDof(); ++i) {
-	actuated_dofs_[(*joint_it)->rankInConfiguration() + i] = true;
-      } 
-    }
   }
 
   Problem::~Problem()
@@ -72,30 +68,22 @@ namespace jrl_qp_controller {
   Problem::resize_data()
   {
     unsigned int n_dofs = robot_->numberDof();
+    unsigned int n_actuated_dofs = robot_->getActuatedJoints().size();
     unsigned int n_contacts = contacts_.size();
-    n_vertices_ = 0;
     
-    for( vector<ContactConstraint*>::iterator it = contacts_.begin();
-	 it != contacts_.end(); 
-	 ++it) {
-      n_vertices_ += (*it)->contact_polygon_.size();
-    }
-
     /*
       Unknowns:  
       * acceleration (n_dofs)
-      * torques (n_dofs)
-      * contact forces (6*n_contacts)
-      * f_orth at the contact polygon vertices (n_vertices_)
+      * torques (n_actuated_dofs)
+      * contact forces (3*n_contacts)
 
       Constraints: 
       * dynamic equation (n_dofs)
-      * contact forces (3*n_contacts)
-      * f_orth positive (n_vertices_)
+      * positive acceleration (1D) of contact point (n_contacts)
    
       */
-    n_rows_ = n_dofs + 3*n_contacts + n_vertices_;
-    n_columns_ = 2*n_dofs + 6*n_contacts + n_vertices_;
+    n_rows_ = n_dofs + n_contacts ;
+    n_columns_ = n_dofs + n_actuated_dofs + 3*n_contacts;
 
     A_.resize(n_rows_,n_columns_,false);
     b_.resize(n_rows_,0);
@@ -107,7 +95,7 @@ namespace jrl_qp_controller {
     c_.resize(n_columns_,0);  
     D_.resize(n_columns_,n_columns_,false);
     solution_.resize(n_columns_,0);
-    solution_torques_.resize(robot_->numberDof());
+    solution_torques_.resize(n_actuated_dofs);
   }
 
   void
@@ -131,32 +119,29 @@ namespace jrl_qp_controller {
     }
 
     /* Set equality/inequality constraints */
-    /* -- Dynamic equation and contact forces */
-    for(unsigned int i = 0;
-	i < n_dofs + 3*n_contacts;
-	++i) {
+    /* -- Dynamic equation (including contact forces) */
+    for(unsigned int i = 0; i < n_dofs;	++i) {
       r_[i] = CGAL::EQUAL;
     }
-    /* -- Positive vertical contact forces at the contact points */
-    for(unsigned int i = n_dofs + 3*n_contacts;
-	i < n_rows_;
-	++i) {
+    /* -- Positive acceleration along frictional cone basis at each contact point */
+    for(unsigned int i = n_dofs; i < n_rows_; ++i) {
       r_[i] = CGAL::LARGER;
     }
 
     /* Actuated joint selection matrix */
+    vector<CjrlJoint *> actuated_joints = robot_->getActuatedJoints();
     for(unsigned int i = 0; i < robot_->numberDof(); ++i) {
-      for(unsigned int j = 0; j < robot_->numberDof(); ++j) {
-	A_(i,robot_->numberDof() + j) = ((i==j)&&(actuated_dofs_[i]))? -1 : 0;
+      for(unsigned int j = 0; j < actuated_joints.size(); ++j) {
+	A_(i,robot_->numberDof() + j) = 
+	  (i == actuated_joints[j]->rankInConfiguration())? -1 : 0;
       }
     }
-    /* Orthogonal contact forces are positive at the contact polygon vertices */
-    unsigned int current_row = n_dofs + 3*n_contacts;
-    unsigned int current_column = 2*n_dofs + 6*n_contacts;
-    for(unsigned int i = 0; i < n_vertices_; ++i) {
-      for(unsigned int j = 0; j < n_vertices_; ++j) {
-	A_(current_row + i,current_column + j) = (i==j)? 1 : 0;
-      }
+
+    /* Positive contact reactions */    
+    unsigned int current_column = n_dofs + actuated_joints.size();
+    for(unsigned int i = 0; i < 3*n_contacts; ++i) {
+      fl_[current_column + i] = true;
+      l_[current_column + i] = 0;
     }
   }
 
@@ -164,8 +149,12 @@ namespace jrl_qp_controller {
   Problem::build_dynamic_equation()
   {
     /* 
-       H.ddot{q} - S.torques - tr(J_c).phi_c = b
-       Note: S has been set in initialize()
+       H.ddot{q} - S.torques - tr(J_c).V_c.f_c = -drift
+       Notes: 
+       -- S has been set in initialize()
+       -- f_c is expressed in the contact friction basis V_c
+       -- the product tr(J_c).V_c has already been computed in 
+          the corresponding contact constraint object.
     */
 
     matrixNxP inertia_matrix = robot_->inertiaMatrix();
@@ -176,14 +165,16 @@ namespace jrl_qp_controller {
 	A_(i,j) = inertia_matrix(i,j);
       }
     }
-
-    for (unsigned int c = 0; c < contacts_.size(); ++c) {
-      unsigned int current_column = 2*robot_->numberDof() + c*6;
+    unsigned int current_column = robot_->numberDof() + robot_->getActuatedJoints().size();
+    for (vector<ContactConstraint*>::iterator contact_it = contacts_.begin();
+	 contact_it != contacts_.end(); 
+	 ++contact_it) {
       for (unsigned int i = 0; i < robot_->numberDof(); ++i) {
-	for (unsigned int j = 0; j < 6; ++j) {
-	  A_(i,current_column + j) = -contacts_[c]->jacobian_(j,i);
+	for (unsigned int j = 0; j < 3; ++j) {
+	  A_(i,current_column + j) = -(*contact_it)->dyn_mat_(i,j);
 	}
       }
+      current_column += 3;
     }
 
     for (unsigned int i = 0; i < robot_->numberDof(); ++i) {
@@ -192,8 +183,8 @@ namespace jrl_qp_controller {
   }
 
   void
-  Problem::set_torque_limits(std::vector<double> &i_l,
-			     std::vector<double> &i_u)
+  Problem::set_torque_limits(vector<double> &i_l,
+			     vector<double> &i_u)
   {
     for(unsigned int i = 0; i < robot_->numberDof(); ++i) {
       fl_[robot_->numberDof() + i] = true;
@@ -206,38 +197,26 @@ namespace jrl_qp_controller {
   void
   Problem::set_contact_constraints()
   {
-    for(vector<ContactConstraint*>::iterator contact_it = contacts_.begin();
-	contact_it != contacts_.end(); 
-	++contact_it) {
-      (*contact_it)->update_jacobian();
-    }
-    /* 
-       Link between contact forces and orthogonal forces
-       at the contact polygon vertices
-    */ 
-    unsigned int considered_vertices = 0;
-    for(unsigned int c = 0; c < contacts_.size(); ++c) {
-      ContactConstraint* current_contact = contacts_[c];
-      unsigned int current_row = robot_->numberDof() + c*3;
-      unsigned int current_column_1 = //corresponding to phi_c
-	2*robot_->numberDof() + c*6; 
-      unsigned int current_column_2 = //orthogonal forces at contact polygon vertices
-	2*robot_->numberDof() + contacts_.size()*6 + considered_vertices; 
+    /*
+      For each contact point, the acceleration of the robot point
+      along the contact normal should be positive.
+    */
+    vectorN current_velocity = robot_->currentVelocity();
+    double drift;
+    unsigned int current_row = robot_->numberDof();
+    for (vector<ContactConstraint*>::iterator contact_it = contacts_.begin();
+	 contact_it != contacts_.end(); 
+	 ++contact_it) {
+      drift = 0; // drift is -dot{J}.dot{q} (both are 1D)
+      for(unsigned int i = 0; i < robot_->numberDof(); ++i) 
+	drift -= (*contact_it)->d_jacobian_(0,i)*current_velocity(i);
+      b_[current_row] = drift;
 
-      A_(current_row,current_column_1 + 2) = -1;
-      A_(current_row + 1,current_column_1 + 3) = -1;
-      A_(current_row + 2,current_column_1 + 4) = -1;
-
-      for(unsigned int p = 0;
-	  p < current_contact->contact_polygon_.size();
-	  ++p) {
-	A_(current_row,current_column_2 + p) = 1;
-	A_(current_row + 1,current_column_2 + p) = current_contact->contact_polygon_[p](1);
-	A_(current_row + 2,current_column_2 + p) = - current_contact->contact_polygon_[p](0);
+      for (unsigned int j = 0; j < 3; ++j) {
+	A_(current_row,j) = (*contact_it)->normal_jacobian_(0,j);
       }
-      considered_vertices += current_contact->contact_polygon_.size();
-    }
-    
+      ++current_row;
+     }
   }
 
   void
@@ -246,10 +225,9 @@ namespace jrl_qp_controller {
     for(vector<Task *>::iterator task_it = tasks_.begin(); 
 	task_it != tasks_.end();
 	++task_it) {
-      (*task_it)->compute_objective();
 
       double weight = (*task_it)->weight();
-
+      unsigned int nb_actuated_dofs = robot_->getActuatedJoints().size();
       /* Set D_ */
       if ((*task_it)->has_quadratic_part()) {
 	const matrixNxP task_D = (*task_it)->get_d();
@@ -263,15 +241,15 @@ namespace jrl_qp_controller {
 	  }
 	  break;
 	case Task::TORQUES:
-	  for(unsigned int i = 0; i < robot_->numberDof(); ++i) {
-	    for(unsigned int j = 0; j < robot_->numberDof(); ++j) {
+	  for(unsigned int i = 0; i < nb_actuated_dofs; ++i) {
+	    for(unsigned int j = 0; j < nb_actuated_dofs; ++j) {
 	      D_(robot_->numberDof() + i,robot_->numberDof() + j) += weight * task_D(i,j);
 	    }
 	  }
 	  break;
 	case Task::BOTH:
-	  for(unsigned int i = 0; i < 2*robot_->numberDof(); ++i) {
-	    for(unsigned int j = 0; j < 2*robot_->numberDof(); ++j) {
+	  for(unsigned int i = 0; i < robot_->numberDof() + nb_actuated_dofs; ++i) {
+	    for(unsigned int j = 0; j < robot_->numberDof() + nb_actuated_dofs; ++j) {
 	      D_(i,j) += weight * task_D(i,j);
 	    }
 	  }	  
@@ -287,12 +265,12 @@ namespace jrl_qp_controller {
 	  }
 	  break;
 	case Task::TORQUES:
-	  for(unsigned int i = 0; i < robot_->numberDof(); ++i) {
+	  for(unsigned int i = 0; i < nb_actuated_dofs; ++i) {
 	    c_[robot_->numberDof() + i] += weight * task_c(i);
 	  }
 	  break;
 	case Task::BOTH:
-	   for(unsigned int i = 0; i < 2*robot_->numberDof(); ++i) {
+	   for(unsigned int i = 0; i < robot_->numberDof() + nb_actuated_dofs; ++i) {
 	     c_[i] += weight * task_c(i);
 	   }
 	}
@@ -330,7 +308,22 @@ namespace jrl_qp_controller {
     options.set_pricing_strategy (CGAL::QP_PARTIAL_FILTERED_DANTZIG);
    
     try {
+      boost::posix_time::ptime start, end;
+      start = boost::posix_time::microsec_clock::local_time();
+
       Solution s = CGAL::solve_quadratic_program(qp, CGAL::Gmpzf(),options);
+
+      end = boost::posix_time::microsec_clock::local_time();
+      boost::posix_time::time_duration duration = end - start;
+      long uDuration = duration.total_microseconds();
+
+      ROS_DEBUG_STREAM("QP Solving time: " << ((double) uDuration * 1e-6) );
+
+      std::stringstream qp_stream;
+      CGAL::print_quadratic_program(qp_stream,qp);
+      ROS_DEBUG_STREAM("QP Problem: " << qp_stream.str());
+      
+      ROS_DEBUG_STREAM("QP Solution: " << s);
 
       //Store result
       unsigned int i = 0;
@@ -343,7 +336,7 @@ namespace jrl_qp_controller {
       vector<double>::iterator begin_torques = 
 	solution_.begin() + robot_->numberDof();
       vector<double>::iterator end_torques =
-	solution_.begin() + 2*robot_->numberDof();
+	begin_torques + robot_->getActuatedJoints().size();
       std::copy(begin_torques,end_torques,solution_torques_.begin());
     }
     catch (CGAL::Assertion_exception e) {
@@ -361,6 +354,26 @@ namespace jrl_qp_controller {
   Problem::solution_torques()
   {
     return solution_torques_;
+  }
+
+  void
+  Problem::compute_one_step()
+  {
+    for(vector<ContactConstraint*>::iterator contact_it = contacts_.begin();
+	contact_it != contacts_.end(); 
+	++contact_it) {
+      (*contact_it)->update_jacobian();
+    }
+    for(vector<Task *>::iterator task_it = tasks_.begin(); 
+	task_it != tasks_.end();
+	++task_it) {
+      (*task_it)->compute_objective();
+    }
+    initialize_data();
+    compute_objective();
+    build_dynamic_equation();
+    set_contact_constraints();
+    solve();
   }
 
 }

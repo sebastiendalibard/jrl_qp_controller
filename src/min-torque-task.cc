@@ -10,7 +10,7 @@ namespace  jrl_qp_controller {
     :Task(i_robot,Task::TORQUES,true,false),
      objective_computed_(false)
   {
-    joint_torque_weights_.resize(robot_->numberDof(),1);
+    joint_torque_weights_.resize(robot_->getActuatedJoints().size(),1);
   }
 
   MinTorqueTask::~MinTorqueTask()
@@ -30,8 +30,8 @@ namespace  jrl_qp_controller {
   MinTorqueTask::compute_objective()
   {
     if (objective_computed_) return;
-   
-    for(unsigned int i = 0; i < robot_->numberDof(); ++i)
+    
+    for(unsigned int i = 0; i < joint_torque_weights_.size(); ++i)
       D_(i,i) = joint_torque_weights_[i];
 
     objective_computed_ = true;

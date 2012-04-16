@@ -1,6 +1,7 @@
 #include <jrl/mal/matrixabstractlayer.hh>
 #include <jrl_qp_controller/gik-feature-task.hh>
 
+#include <ros/console.h>
 
 namespace jrl_qp_controller {
 
@@ -49,10 +50,15 @@ namespace jrl_qp_controller {
 
     if(!first_call_) {
       ros::Duration dt = now - last_robot_update_;
-      d_jacobian_ = dt.toSec() * (jacobian_ - last_jacobian_);
+      if (dt.toSec())
+	noalias(d_jacobian_) = (1/dt.toSec()) * (jacobian_ - last_jacobian_);
     }
     last_robot_update_ = now;
     first_call_ = false;
+
+    ROS_DEBUG_STREAM("task: " << this);
+    ROS_DEBUG_STREAM("jacobian: " << jacobian_);
+    ROS_DEBUG_STREAM("value: " << value_);
   }
   
 } // end of namespace jrl_qp_controller

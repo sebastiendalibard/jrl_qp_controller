@@ -45,12 +45,16 @@ rosbuild_add_library(${PROJECT_NAME}
   src/gik-feature-task.cc
   src/contact-constraint.cc 
   src/position-task.cc
-  src/transformation-task.cc)
+  src/transformation-task.cc
+  src/com-task.cc
+  src/controller.cc)
 
 PKG_CONFIG_USE_DEPENDENCY(${PROJECT_NAME} hpp-gik)
 
 #target_link_libraries(${PROJECT_NAME} another_library)
 rosbuild_add_boost_directories()
 rosbuild_link_boost(${PROJECT_NAME} thread)
-rosbuild_add_executable(controller src/controller.cpp)
-target_link_libraries(controller ${PROJECT_NAME})
+rosbuild_add_executable(simple-controller examples/simple-controller.cc)
+rosbuild_add_executable(humanoid-controller examples/humanoid-posture-controller.cc)
+target_link_libraries(simple-controller ${PROJECT_NAME})
+target_link_libraries(humanoid-controller ${PROJECT_NAME})
