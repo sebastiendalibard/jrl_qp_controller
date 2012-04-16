@@ -11,12 +11,16 @@ namespace jrl_qp_controller {
   public:
     ContactConstraint(CjrlDynamicRobot *i_robot, 
 		      CjrlJoint *i_joint,
-		      vector3d i_contact_point,
-		      std::vector<vector3d> &i_polygon,
-		      matrix4d &i_contact_transformation);
+		      const vector3d &i_contact_point,
+		      const vector3d &i_contact_normal,
+		      double i_friction_coefficient = 0.5);
     ~ContactConstraint();
     
     void update_jacobian();
+
+    void compute_friction_basis(const vector3d &i_contact_normal,
+				double i_friction_coefficient);
+
 
     /*
        Robot 
@@ -29,41 +33,50 @@ namespace jrl_qp_controller {
     CjrlJoint * joint_;
 
     /* 
-       Point where the 6D contact force is computed.
-       It is assumed that this point belongs to the contact surface.
-       Expressed in joint_ frame. 
+       Contact point, expressed in joint_ frame.
     */
     vector3d contact_point_;
 
-    /* 
-       Points defining the convex hull in which the
-       center of pressure has to stay.
-       Expressed in contact_transformation_ frame.
-    */
-    std::vector<vector3d> contact_polygon_;
-
-
     /*
-      Global transformation of the contact point.
-      This frame z is orthogonal to the contact plane.
+      Linearized friction cone basis.
     */
-    matrix4d contact_transformation_;
+    matrixNxP friction_basis_;
 
-  
     /*
       contact jacobian
     */
     matrixNxP jacobian_;
 
     /*
-      previous contact jacobian
+      transpose of the contact normal
+    */
+    matrixNxP normal_;
+
+    /*
+      Jacobian of the point along the contact normal.
+    */
+    matrixNxP normal_jacobian_;
+
+    /*
+      previous contact jacobian (along the normal)
     */
     matrixNxP last_jacobian_;
 
     /*
-      jacobian time derivative
+      jacobian (along the normal) time derivative
     */
     matrixNxP d_jacobian_;
+
+    /*
+      Part of the system's dynamic equation corresponding to this contact.
+      dyn_mat_ = transpose(jacobian_)*friction_basis_
+      Stored here to avoid multiple allocations.
+    */
+    matrixNxP dyn_mat_;
+
+    
+
+    double epsilon_;
 
     ros::Time last_robot_update_;
     bool first_call_;
