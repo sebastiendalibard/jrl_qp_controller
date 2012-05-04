@@ -19,9 +19,12 @@ namespace jrl_qp_controller {
 
     void target(const vector3d &i_target);
 
+    void targetXY(double x, double y);
+
   private:
     ChppGikComConstraint* gik_com_constraint_;
     vectorN target_;
+    unsigned int dimension_;
   };
 } // end of namespace jrl_qp_controller
 

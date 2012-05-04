@@ -21,7 +21,7 @@ namespace jrl_qp_controller {
 
     void set_gik_constraint(CjrlGikStateConstraint* i_gik_constraint);
 
-    virtual void update_jacobian_and_value();
+    virtual void update_jacobian_and_value(double time_step);
 
   protected:
     CjrlGikStateConstraint* gik_constraint_;

@@ -2,77 +2,89 @@
 
 #include <algorithm>
 
-#include "CGAL/exceptions.h"
-
 #include <ros/console.h>
 #include <sstream>
 
 #include <jrl/mal/matrixabstractlayer.hh>
 
-#include <jrl_qp_controller/problem.hh>
+#include <jrl_qp_controller/problem-oases.hh>
 #include <jrl_qp_controller/contact-constraint.hh>
 #include <jrl_qp_controller/task.hh>
 
 using std::vector;
-using std::set;
+using std::map;
 
 namespace jrl_qp_controller {
 
-  Problem::Problem(CjrlDynamicRobot * i_robot)
-    :robot_(i_robot)
+  ProblemOases::ProblemOases(CjrlDynamicRobot * i_robot)
+    :robot_(i_robot),
+     problem_impl_(NULL),
+     first_qp_solve_(true)
   {
   }
 
-  Problem::~Problem()
+  ProblemOases::~ProblemOases()
   {
   }
 
   void
-  Problem::add_task(Task * i_task)
+  ProblemOases::add_task(Task * i_task)
   {
     tasks_.push_back(i_task);
   }
 
   void
-  Problem::remove_task(Task * i_task)
+  ProblemOases::remove_task(Task * i_task)
   {
     std::remove< vector<Task*>::iterator, Task*>
       (tasks_.begin(),tasks_.end(),i_task);
   }
 
   void
-  Problem::reset_tasks()
+  ProblemOases::reset_tasks()
   {
     tasks_.clear();
   }
 
   void
-  Problem::add_contact(ContactConstraint * i_contact)
+  ProblemOases::add_contact(ContactConstraint * i_contact)
   {
-    contacts_.insert(i_contact);
+    contacts_[i_contact] = true;
   }
   
   void
-  Problem::remove_contact(ContactConstraint * i_contact)
+  ProblemOases::remove_contact(ContactConstraint * i_contact)
   {
-    contacts_.erase(i_contact);
+    contacts_[i_contact] = false;
   }
 
   void
-  Problem::reset_contacts()
+  ProblemOases::reset_contacts()
   {
     contacts_.clear();
   }
   
-  const std::set<ContactConstraint *>&
-  Problem::get_contacts() const
+  const std::map<ContactConstraint *,bool>&
+  ProblemOases::get_contacts() const
   {
     return contacts_;
+  }
+  
+  unsigned int
+  ProblemOases::count_activated_contacts() const
+  {
+    unsigned int res = 0;
+    for(map<ContactConstraint*,bool>::const_iterator contact_it = contacts_.begin();
+	contact_it != contacts_.end();
+	++contact_it) {
+      if((*contact_it).second) ++res;
+    }
+    return res;
   }
 
 
   void
-  Problem::resize_data()
+  ProblemOases::resize_data()
   {
     unsigned int n_dofs = robot_->numberDof();
     unsigned int n_actuated_dofs = robot_->getActuatedJoints().size();
@@ -93,20 +105,26 @@ namespace jrl_qp_controller {
     n_columns_ = n_dofs + n_actuated_dofs + 3*n_contacts;
 
     A_.resize(n_rows_,n_columns_,false);
-    b_.resize(n_rows_,0);
-    r_.resize(n_rows_);
-    fl_.resize(n_columns_,false);
+    bl_.resize(n_rows_,0);
+    bu_.resize(n_rows_,0);
     l_.resize(n_columns_,0);
-    fu_.resize(n_columns_,false);
     u_.resize(n_columns_,0);
     c_.resize(n_columns_,0);  
     D_.resize(n_columns_,n_columns_,false);
     solution_.resize(n_columns_,0);
     solution_torques_.resize(n_actuated_dofs);
+
+    if (problem_impl_) delete problem_impl_;
+    problem_impl_ = new qpOASES::SQProblem(n_columns_,n_rows_,qpOASES::HST_SEMIDEF);
+    first_qp_solve_ = true;
+    qpOASES::Options options;
+    options.setToDefault();
+    options.printLevel = qpOASES::PL_LOW;
+    problem_impl_->setOptions(options);
   }
 
   void
-  Problem::initialize_data()
+  ProblemOases::initialize_data()
   {
     unsigned int n_dofs = robot_->numberDof();
     unsigned int n_contacts = contacts_.size();
@@ -115,7 +133,8 @@ namespace jrl_qp_controller {
       for(unsigned int j = 0; j < n_columns_; ++j) {
 	A_(i,j) = 0;
       }
-      b_[i] = 0;
+      bl_[i] = -std::numeric_limits<double>::infinity();
+      bu_[i] = std::numeric_limits<double>::infinity();
     }
     
     for(unsigned int i = 0; i < n_columns_; ++i) {
@@ -123,16 +142,8 @@ namespace jrl_qp_controller {
 	D_(i,j) = 0;
       }
       c_[i] = 0;
-    }
-
-    /* Set equality/inequality constraints */
-    /* -- Dynamic equation (including contact forces) */
-    for(unsigned int i = 0; i < n_dofs;	++i) {
-      r_[i] = CGAL::EQUAL;
-    }
-    /* -- Positive acceleration along frictional cone basis at each contact point */
-    for(unsigned int i = n_dofs; i < n_rows_; ++i) {
-      r_[i] = CGAL::LARGER;
+      l_[i] = -std::numeric_limits<double>::infinity();
+      u_[i] = std::numeric_limits<double>::infinity();
     }
 
     /* Actuated joint selection matrix */
@@ -144,16 +155,15 @@ namespace jrl_qp_controller {
       }
     }
 
-    /* Positive contact reactions */    
+    /* Positive contact reactions */
     unsigned int current_column = n_dofs + actuated_joints.size();
     for(unsigned int i = 0; i < 3*n_contacts; ++i) {
-      fl_[current_column + i] = true;
       l_[current_column + i] = 0;
     }
   }
 
   void
-  Problem::build_dynamic_equation()
+  ProblemOases::build_dynamic_equation()
   {
     /* 
        H.ddot{q} - S.torques - tr(J_c).V_c.f_c = -drift
@@ -161,7 +171,7 @@ namespace jrl_qp_controller {
        -- S has been set in initialize()
        -- f_c is expressed in the contact friction basis V_c
        -- the product tr(J_c).V_c has already been computed in 
-          the corresponding contact constraint object.
+       the corresponding contact constraint object.
     */
 
     matrixNxP inertia_matrix = robot_->inertiaMatrix();
@@ -173,36 +183,46 @@ namespace jrl_qp_controller {
       }
     }
     unsigned int current_column = robot_->numberDof() + robot_->getActuatedJoints().size();
-    for (set<ContactConstraint*>::iterator contact_it = contacts_.begin();
+    for (map<ContactConstraint*,bool>::iterator contact_it = contacts_.begin();
 	 contact_it != contacts_.end(); 
 	 ++contact_it) {
-      for (unsigned int i = 0; i < robot_->numberDof(); ++i) {
+      if ((*contact_it).second) { //contact is activated
 	for (unsigned int j = 0; j < 3; ++j) {
-	  A_(i,current_column + j) = -(*contact_it)->dyn_mat_(i,j);
+	  for (unsigned int i = 0; i < robot_->numberDof(); ++i) {
+	    A_(i,current_column + j) = -((*contact_it).first)->dyn_mat_(i,j);
+	  }
+	  u_[current_column +j] = std::numeric_limits<double>::infinity();
 	}
+      }
+      else {
+	  for (unsigned int j = 0; j < 3; ++j) {
+	    for (unsigned int i = 0; i < robot_->numberDof(); ++i) {
+	      A_(i,current_column + j) = 0;
+	    }
+	    u_[current_column +j] = 0;
+	  }
       }
       current_column += 3;
     }
 
     for (unsigned int i = 0; i < robot_->numberDof(); ++i) {
-      b_[i] = -dynamic_drift(i);
+      bl_[i] = -dynamic_drift(i);
+      bu_[i] = -dynamic_drift(i);
     } 
   }
 
   void
-  Problem::set_torque_limits(vector<double> &i_l,
+  ProblemOases::set_torque_limits(vector<double> &i_l,
 			     vector<double> &i_u)
   {
     for(unsigned int i = 0; i < robot_->numberDof(); ++i) {
-      fl_[robot_->numberDof() + i] = true;
       l_[robot_->numberDof() + i] = i_l[i];
-      fu_[robot_->numberDof() + i] = true;
       u_[robot_->numberDof() + i] = i_u[i];
     }
   }
 
   void
-  Problem::set_contact_constraints()
+  ProblemOases::set_contact_constraints()
   {
     /*
       For each contact point, the acceleration of the robot point
@@ -211,23 +231,31 @@ namespace jrl_qp_controller {
     vectorN current_velocity = robot_->currentVelocity();
     double drift;
     unsigned int current_row = robot_->numberDof();
-    for (set<ContactConstraint*>::iterator contact_it = contacts_.begin();
+    for (map<ContactConstraint*,bool>::iterator contact_it = contacts_.begin();
 	 contact_it != contacts_.end(); 
 	 ++contact_it) {
-      drift = 0; // drift is -dot{J}.dot{q} (both are 1D)
-      for(unsigned int i = 0; i < robot_->numberDof(); ++i) 
-	drift -= (*contact_it)->d_jacobian_(0,i)*current_velocity(i);
-      b_[current_row] = drift;
-
-      for (unsigned int j = 0; j < 3; ++j) {
-	A_(current_row,j) = (*contact_it)->normal_jacobian_(0,j);
+      if((*contact_it).second) { //contact is activated
+	drift = 0; // drift is -dot{J}.dot{q} (both are 1D)
+	for(unsigned int i = 0; i < robot_->numberDof(); ++i) 
+	  drift -= ((*contact_it).first)->d_jacobian_(0,i)*current_velocity(i);
+	bl_[current_row] = drift;
+	
+	for (unsigned int j = 0; j < 3; ++j) {
+	  A_(current_row,j) = ((*contact_it).first)->normal_jacobian_(0,j);
+	}	
+      }
+      else {
+	bl_[current_row] = -std::numeric_limits<double>::infinity();
+	for (unsigned int j = 0; j < 3; ++j) {
+	  A_(current_row,j) = 0;
+	}
       }
       ++current_row;
-     }
+    }
   }
 
   void
-  Problem::compute_objective()
+  ProblemOases::compute_objective()
   {
     for(vector<Task *>::iterator task_it = tasks_.begin(); 
 	task_it != tasks_.end();
@@ -285,10 +313,10 @@ namespace jrl_qp_controller {
 	  }
 	  break;
 	case Task::BOTH:
-	   for(unsigned int i = 0; i < robot_->numberDof() + nb_actuated_dofs; ++i) {
-	     c_[i] += weight * task_c(i);
-	   }
-	   break;
+	  for(unsigned int i = 0; i < robot_->numberDof() + nb_actuated_dofs; ++i) {
+	    c_[i] += weight * task_c(i);
+	  }
+	  break;
 	case Task::CONTACT_FORCES:
 	  unsigned int current_row = robot_->numberDof() + nb_actuated_dofs;
 	  for(unsigned int i = 0; i < 3*contacts_.size(); ++i) {
@@ -300,94 +328,108 @@ namespace jrl_qp_controller {
   }
 
   void
-  Problem::compute_acceleration_bounds()
+  ProblemOases::compute_acceleration_bounds(double time_step)
   {
-    //TODO
+    vector<CjrlJoint*> actuated_joints = robot_->getActuatedJoints();
+    for(vector<CjrlJoint*>::const_iterator joint_it = actuated_joints.begin();
+	joint_it != actuated_joints.end();
+	++joint_it) {
+      unsigned int pos = (*joint_it)->rankInConfiguration();
+      double qmin = (*joint_it)->lowerBound(0);
+      double qmax = (*joint_it)->upperBound(0);
+      double q = robot_->currentConfiguration()(pos);
+      double dq = robot_->currentVelocity()(pos);
+      double ddq_max = 2/time_step*((qmax - q)/time_step - dq);
+      double ddq_min = 2/time_step*((qmin - q)/time_step - dq);
+      l_[pos] = ddq_min;
+      u_[pos] = ddq_max;
+    }
   }
 
   void
-  Problem::solve()
+  ProblemOases::solve()
   {
-    //Make sure D is definite positive
+    if(!problem_impl_) {
+      std::cerr << "Problem has not be initialized. Have you called Problem::resize_data()?"
+		<< std::endl;
+      return;
+    }
+
+    //Make sure D is semi definite positive
     for(unsigned int i = 0; i < robot_->numberDof(); ++i) {
       D_(i,i) += 1e-9;
     }
+    int wsr = 10000;
 
-    Program qp(n_columns_,n_rows_,
-	       matrix_iterator(A_.begin2()),
-	       b_.begin(),
-	       r_.begin(),
-	       fl_.begin(),
-	       l_.begin(),
-	       fu_.begin(),
-	       u_.begin(),
-	       matrix_iterator(D_.begin2()),
-	       c_.begin());
-
-    CGAL::Quadratic_program_options options;
-    //options.set_verbosity(2);
-    options.set_pricing_strategy (CGAL::QP_DANTZIG);
-   
-    try {
-      boost::posix_time::ptime start, end;
-      start = boost::posix_time::microsec_clock::local_time();
-
-      Solution s = CGAL::solve_quadratic_program(qp, CGAL::Gmpzf(),options);
-
-      end = boost::posix_time::microsec_clock::local_time();
-      boost::posix_time::time_duration duration = end - start;
-      long uDuration = duration.total_microseconds();
-
-      ROS_DEBUG_STREAM("QP Solving time: " << ((double) uDuration * 1e-6) );
-
-      std::stringstream qp_stream;
-      CGAL::print_quadratic_program(qp_stream,qp);
-      ROS_DEBUG_STREAM("QP Problem: " << qp_stream.str());
-      
-      //Store result
-      unsigned int i = 0;
-      Solution::Variable_value_iterator it = s.variable_values_begin();
-      while (it != s.variable_values_end()) {
-	solution_[i] = to_double(*it);
-	++it;
-	++i;
-      }
-
-      //DEBUG
-      vectorN solution_ublas(solution_.size());
-      for(unsigned int i = 0; i < solution_.size(); ++i) solution_ublas(i) = solution_[i];
-      ROS_DEBUG_STREAM("QP Solution: " << solution_ublas);
-
-      vector<double>::iterator begin_torques = 
-	solution_.begin() + robot_->numberDof();
-      vector<double>::iterator end_torques =
-	begin_torques + robot_->getActuatedJoints().size();
-      std::copy(begin_torques,end_torques,solution_torques_.begin());
+    boost::posix_time::ptime start, end;
+    start = boost::posix_time::microsec_clock::local_time();
+    qpOASES::returnValue qp_res;
+    if (first_qp_solve_) {
+      qp_res = problem_impl_->init(&(D_.data()[0]),
+				   &(*c_.begin()),
+				   &(A_.data()[0]),
+				   &(*l_.begin()),
+				   &(*u_.begin()),
+				   &(*bl_.begin()),
+				   &(*bu_.begin()),
+				   wsr);
     }
-    catch (CGAL::Assertion_exception e) {
-      std::cout << "Invalid problem: " << e.expression() << std::endl;
+    else {
+      qp_res = problem_impl_->hotstart(&(D_.data()[0]),
+				       &(*c_.begin()),
+				       &(A_.data()[0]),
+				       &(*l_.begin()),
+				       &(*u_.begin()),
+				       &(*bl_.begin()),
+				       &(*bu_.begin()),
+				       wsr);
     }
+    end = boost::posix_time::microsec_clock::local_time();
+    boost::posix_time::time_duration duration = end - start;
+    long uDuration = duration.total_microseconds();
+
+    ROS_DEBUG_STREAM("QP Solving time: " << ((double) uDuration * 1e-6) );
+
+    //Store result
+    if(qp_res == qpOASES::SUCCESSFUL_RETURN) {
+      problem_impl_->getPrimalSolution(&(*solution_.begin()));
+      first_qp_solve_ = false;
+    }
+    else {
+      first_qp_solve_ = true;
+    }
+    //DEBUG
+    vectorN solution_ublas(solution_.size());
+    for(unsigned int i = 0; i < solution_.size(); ++i) solution_ublas(i) = solution_[i];
+    ROS_DEBUG_STREAM("QP Solution: " << solution_ublas);
+
+    vector<double>::iterator begin_torques = 
+      solution_.begin() + robot_->numberDof();
+    vector<double>::iterator end_torques =
+      begin_torques + robot_->getActuatedJoints().size();
+    std::copy(begin_torques,end_torques,solution_torques_.begin());
+
   }
 
   std::vector<double>& 
-  Problem::solution()
+  ProblemOases::solution()
   {
     return solution_;
   }
 
   std::vector<double>&
-  Problem::solution_torques()
+  ProblemOases::solution_torques()
   {
     return solution_torques_;
   }
 
   void
-  Problem::compute_one_step(double time_step)
+  ProblemOases::compute_one_step(double time_step)
   {
-    for(set<ContactConstraint*>::iterator contact_it = contacts_.begin();
+    for(map<ContactConstraint*,bool>::iterator contact_it = contacts_.begin();
 	contact_it != contacts_.end(); 
 	++contact_it) {
-      (*contact_it)->update_jacobian(time_step);
+      if((*contact_it).second) ((*contact_it).first)->update_jacobian(time_step);
     }
     for(vector<Task *>::iterator task_it = tasks_.begin(); 
 	task_it != tasks_.end();
@@ -398,6 +440,7 @@ namespace jrl_qp_controller {
     compute_objective();
     build_dynamic_equation();
     set_contact_constraints();
+    compute_acceleration_bounds(time_step);
     solve();
   }
 

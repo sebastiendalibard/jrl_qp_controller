@@ -11,6 +11,7 @@ namespace  jrl_qp_controller {
      objective_computed_(false)
   {
     joint_torque_weights_.resize(robot_->getActuatedJoints().size(),1);
+    MAL_MATRIX_FILL(D_,0);
   }
 
   MinTorqueTask::~MinTorqueTask()
@@ -27,7 +28,7 @@ namespace  jrl_qp_controller {
   }
 
   void
-  MinTorqueTask::compute_objective()
+  MinTorqueTask::compute_objective(double time_step)
   {
     if (objective_computed_) return;
     

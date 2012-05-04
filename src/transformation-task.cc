@@ -28,4 +28,10 @@ namespace jrl_qp_controller {
     gik_transformation_constraint_->targetTransformation(i_target);
   }
 
+  void
+  TransformationTask::target(const vector3d &i_target)
+  {
+    gik_transformation_constraint_->worldTarget(i_target);
+  }
+
 } // end of namespace jrl_qp_controller

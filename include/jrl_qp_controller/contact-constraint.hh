@@ -16,14 +16,18 @@ namespace jrl_qp_controller {
 		      double i_friction_coefficient = 0.5);
     ~ContactConstraint();
     
-    void update_jacobian();
+    void update_jacobian(double time_step);
 
     void compute_friction_basis(const vector3d &i_contact_normal,
 				double i_friction_coefficient);
 
+    /*
+      Outputs contact point position and contact force value (3D)
+    */
+    void display_contact_information(double x1, double x2, double x3);
 
     /*
-       Robot 
+      Robot 
     */
     CjrlDynamicRobot * robot_;
 

@@ -18,11 +18,17 @@ namespace jrl_qp_controller {
 
     ~FeatureTask();
     
-    virtual void compute_objective();
+    virtual void compute_objective(double time_step);
 
-    virtual void update_jacobian_and_value() = 0;
+    virtual void update_jacobian_and_value(double time_step) = 0;
 
     void set_gain(double i_gain);
+
+    /*
+      For debug purpose.
+    */
+    vectorN computed_acceleration(const vectorN & robot_acceleration, 
+				  const vectorN & robot_velocity);
 
   protected:
     double gain_;

@@ -67,8 +67,9 @@ namespace jrl_qp_controller {
 
     e0 = i_contact_normal / MAL_S3_VECTOR_NORM(i_contact_normal);
     
+ 
     /*
-      Arbitrarily choose e1
+      Arbitrarily choose e1, orthogonal to e0
     */
     if ( abs ( pow(e0(1),2) + pow(e0(2),2)) < epsilon_) { //e0 is k.(x)
       e1 = vector3d(0,1,0);
@@ -93,7 +94,7 @@ namespace jrl_qp_controller {
     */
     e2 = temp_rot*e1;
     e3 = temp_rot*e2;
-      
+
     /*
       Fill the linearized friction basis:
       -- e0 + mu.e1
@@ -111,26 +112,31 @@ namespace jrl_qp_controller {
   }
 
   void
-  ContactConstraint::update_jacobian()
+  ContactConstraint::update_jacobian(double time_step)
   {
-    ros::Time now = ros::Time::now();
-
     last_jacobian_ = normal_jacobian_;
     robot_->getPositionJacobian(*(robot_->rootJoint()),*joint_,contact_point_,jacobian_);
     noalias(normal_jacobian_) = prod(normal_,jacobian_);
     if(!first_call_) {
-      ros::Duration dt = now - last_robot_update_;
-      if (dt.toSec())
-	noalias(d_jacobian_) = 1/dt.toSec() * (normal_jacobian_ - last_jacobian_);
+      noalias(d_jacobian_) = normal_jacobian_ - last_jacobian_;
+      if (time_step)
+	d_jacobian_ /= time_step;
     }
-    last_robot_update_ = now;
     first_call_ = false;
 
     noalias(dyn_mat_) = prod(MAL_RET_TRANSPOSE(jacobian_), friction_basis_);
 
-    //ROS_DEBUG_STREAM("contact: " << this);
-    //ROS_DEBUG_STREAM("jacobian: " << jacobian_);
-    
+    ROS_DEBUG_STREAM("contact: " << this);
+    ROS_DEBUG_STREAM("jacobian: " << jacobian_);
+  }
+
+  void
+  ContactConstraint::display_contact_information(double x1, double x2, double x3)
+  {
+    vectorN tmp(3);
+    tmp(0) = x1; tmp(1) = x2; tmp(2) = x3;
+    ROS_DEBUG_STREAM("contact: " << this);
+    ROS_DEBUG_STREAM("Computed force: " << (prod(friction_basis_,tmp)));
   }
 
 } // end of namespace jrl_qp_controller

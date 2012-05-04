@@ -20,6 +20,8 @@ namespace jrl_qp_controller {
     ~TransformationTask();
 
     void target(const matrix4d &i_target);
+    
+    void target(const vector3d &i_target);
   private:
     ChppGikTransformationConstraint* gik_transformation_constraint_;
   };

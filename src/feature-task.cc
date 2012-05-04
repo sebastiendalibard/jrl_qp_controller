@@ -17,30 +17,40 @@ namespace jrl_qp_controller {
   }
 
   void
-  FeatureTask::compute_objective()
+  FeatureTask::compute_objective(double time_step)
   {
-    update_jacobian_and_value();
+    update_jacobian_and_value(time_step);
 
-    vectorN desired_acceleration = 
+    vectorN desired_acceleration =
       - gain_ * value_ - 2 * sqrt(gain_) * MAL_RET_A_by_B(jacobian_,robot_->currentVelocity());
 
-    noalias(D_) = prod(MAL_RET_TRANSPOSE(jacobian_), 2*jacobian_);
+    noalias(D_) = 2*prod(MAL_RET_TRANSPOSE(jacobian_), jacobian_);
 
     noalias(c_) = 2*prod(MAL_RET_TRANSPOSE(jacobian_),
-			 prod(d_jacobian_,robot_->currentVelocity()) 
+			 prod(d_jacobian_,robot_->currentVelocity())
 			 - desired_acceleration) ;
 
     ROS_DEBUG_STREAM("task: " << this);
     ROS_DEBUG_STREAM("desired acceleration: " << desired_acceleration);
     ROS_DEBUG_STREAM("D: " << D_);
-    ROS_DEBUG_STREAM("c: " << c_);    
+    ROS_DEBUG_STREAM("c: " << c_);
   }
-  
+
   void
   FeatureTask::set_gain(double i_gain)
   {
     gain_ = i_gain;
   }
 
+  vectorN
+  FeatureTask::computed_acceleration(const vectorN & robot_acceleration, 
+				     const vectorN & robot_velocity)
+  {
+    vectorN acc(value_.size());
+    acc = prod(jacobian_, robot_acceleration) + prod(d_jacobian_,robot_velocity);
+    return acc;
+  }
+
 
 } // end of namespace jrl_qp_controller
+

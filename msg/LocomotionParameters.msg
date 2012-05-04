@@ -1,0 +1,7 @@
+float64 flight_duration
+float64 double_support_duration
+float64 step_height
+float64 step_length
+float64 com_amplitude
+float64 com_phase
+float64 trunk_angle

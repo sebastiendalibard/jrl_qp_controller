@@ -14,7 +14,7 @@ namespace jrl_qp_controller {
     MinTorqueTask(CjrlDynamicRobot * i_robot);
     ~MinTorqueTask();
 
-    virtual void compute_objective();
+    virtual void compute_objective(double time_step);
 
     virtual void set_joint_torque_weights(std::vector<double> &i_weights);
 

@@ -23,6 +23,7 @@ else()
 endif()
 
 ADD_REQUIRED_DEPENDENCY("hpp-gik >= 2.7")
+ADD_REQUIRED_DEPENDENCY("qp-oases")
 
 rosbuild_init()
 
@@ -32,7 +33,7 @@ set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/lib)
 
 #uncomment if you have defined messages
-#rosbuild_genmsg()
+rosbuild_genmsg()
 #uncomment if you have defined services
 #rosbuild_gensrv()
 
@@ -40,21 +41,33 @@ set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/lib)
 
 rosbuild_add_library(${PROJECT_NAME} 
   src/problem.cc 
-  src/min-torque-task.cc 
+  src/problem-oases.cc
+  src/min-torque-task.cc
+  src/angular-momentum-task.cc
   src/feature-task.cc
   src/gik-feature-task.cc
   src/contact-constraint.cc 
   src/position-task.cc
   src/transformation-task.cc
+  src/configuration-task.cc
+  src/min-contact-force.cc
+  src/plane-task.cc
+  src/parallel-task.cc
   src/com-task.cc
-  src/controller.cc)
+  src/controller.cc
+  src/locomotion-controller.cc)
 
 PKG_CONFIG_USE_DEPENDENCY(${PROJECT_NAME} hpp-gik)
+PKG_CONFIG_USE_DEPENDENCY(${PROJECT_NAME} qp-oases)
 
 #target_link_libraries(${PROJECT_NAME} another_library)
 rosbuild_add_boost_directories()
 rosbuild_link_boost(${PROJECT_NAME} thread)
 rosbuild_add_executable(simple-controller examples/simple-controller.cc)
 rosbuild_add_executable(humanoid-controller examples/humanoid-posture-controller.cc)
+rosbuild_add_executable(kinematic-controller examples/state-publisher-controller.cc)
+rosbuild_add_executable(locomotion-controller examples/locomotion-controller.cc)
 target_link_libraries(simple-controller ${PROJECT_NAME})
 target_link_libraries(humanoid-controller ${PROJECT_NAME})
+target_link_libraries(kinematic-controller ${PROJECT_NAME})
+target_link_libraries(locomotion-controller ${PROJECT_NAME})

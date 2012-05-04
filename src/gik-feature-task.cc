@@ -36,10 +36,8 @@ namespace jrl_qp_controller {
   }
 
   void
-  GikFeatureTask::update_jacobian_and_value()
+  GikFeatureTask::update_jacobian_and_value(double time_step)
   {
-    ros::Time now = ros::Time::now();
-
     last_jacobian_ = jacobian_;
 
     /* Get jacobian and value from gik task */
@@ -49,16 +47,16 @@ namespace jrl_qp_controller {
     value_ = gik_constraint_->value();
 
     if(!first_call_) {
-      ros::Duration dt = now - last_robot_update_;
-      if (dt.toSec())
-	noalias(d_jacobian_) = (1/dt.toSec()) * (jacobian_ - last_jacobian_);
+      noalias(d_jacobian_) = jacobian_ - last_jacobian_;
+      if (time_step)
+	d_jacobian_ /= time_step;
     }
-    last_robot_update_ = now;
     first_call_ = false;
 
     ROS_DEBUG_STREAM("task: " << this);
     ROS_DEBUG_STREAM("jacobian: " << jacobian_);
     ROS_DEBUG_STREAM("value: " << value_);
+    ROS_DEBUG_STREAM("value norm: " << norm_2(value_));
   }
   
 } // end of namespace jrl_qp_controller
