@@ -5,3 +5,5 @@ float64 step_length
 float64 com_amplitude
 float64 com_phase
 float64 trunk_angle
+float64 am_task_weight
+float64 torque_task_weight
