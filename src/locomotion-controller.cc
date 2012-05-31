@@ -24,15 +24,16 @@ namespace jrl_qp_controller {
       Set default values
     */
     time_step_ = 0.005;
-    contact_precision_ = 5e-4;
+    contact_precision_ = 3e-4;
     foot_flight_duration_ = 0.5;
     double_support_duration_ = 0.2;
-    step_height_ = 0.001;
+    step_height_ = 0.00;
     step_length_ = 0.0;
-    com_amplitude_ = 0.02;
+    com_amplitude_ = 0.0;
     com_phase_ = 0;
     x_start_ = 0;
     x_target_ = 0;
+    x_support_ = 0;
 
     /*
       The following variables will be properly set in initialize()
@@ -60,11 +61,14 @@ namespace jrl_qp_controller {
   {
     assert(i_start_config.size() == robot_->numberDof());
 
+    seqplay_file_.open("/tmp/seqplay.txt",std::fstream::out);
+    write_joints();
+
     /* Set jrl properties */
     std::string property,value;
     property="ComputeZMP"; value="true";
     robot_->setProperty ( property,value );
-    property="TimeStep"; value="0.005";
+    property="TimeStep"; value="0.001";
     robot_->setProperty ( property,value );
     property="ComputeAccelerationCoM"; value="true";
     robot_->setProperty ( property,value );
@@ -89,23 +93,43 @@ namespace jrl_qp_controller {
     robot_->currentAcceleration(zero_config);
     robot_->computeForwardKinematics();
 
+    double ankle_height = robot_->leftAnkle()->currentTransformation()(2,3);
+    ROS_INFO_STREAM("Ankle height: " 
+		     << ankle_height);
+
+    if (ankle_height != 0) {
+      i_start_config(2) -= ankle_height;
+      robot_->currentConfiguration(i_start_config);
+      robot_->computeForwardKinematics();
+      ROS_INFO_STREAM("Ankle height after correction: " 
+		      << robot_->leftAnkle()->currentTransformation()(2,3));
+    }
+
+
+    write_config();
+
     com_position_ = robot_->positionCenterOfMass();
     com_target_ = com_position_;
 
     /*
       Allocate tasks.
     */
+    /* -- Nao hip task (1 motor per 2 dofs) */
+    nao_hip_task_ = new NaoHipTask(robot_);
+    nao_hip_task_->set_gain(1000);
+    nao_hip_task_->weight(100);
+
     /* -- left foot */
     matrix4d left_ankle_transformation = robot_->leftAnkle()->currentTransformation();
     left_foot_task_ = new TransformationTask(robot_, robot_->leftAnkle(),vector3d(0,0,0),left_ankle_transformation);
     left_foot_task_->set_gain(1000);
-    left_foot_task_->weight(10);
+    left_foot_task_->weight(100);
 
     /* -- right foot */
     matrix4d right_ankle_transformation = robot_->rightAnkle()->currentTransformation();
     right_foot_task_ = new TransformationTask(robot_, robot_->rightAnkle(),vector3d(0,0,0),right_ankle_transformation);
     right_foot_task_->set_gain(1000);
-    right_foot_task_->weight(10);
+    right_foot_task_->weight(100);
 
     /* -- config task */
     vectorN wb_mask(robot_->numberDof());
@@ -113,12 +137,12 @@ namespace jrl_qp_controller {
     for (unsigned int i = 6; i < robot_->numberDof(); ++i) wb_mask(i) = 1;
     config_task_ = new ConfigurationTask(robot_,i_start_config,wb_mask);
     config_task_->set_gain(10);
-    config_task_->weight(0.001);
+    config_task_->weight(0.01);
 
     /* -- com task */
     com_task_ = new ComTask(robot_, com_target_);
-    com_task_->set_gain(50);
-    com_task_->weight(1);
+    com_task_->set_gain(100);
+    com_task_->weight(10);
     com_x_shift_ = com_position_(0) - right_ankle_transformation(0,3);
 
     /* -- parallel task */
@@ -128,8 +152,8 @@ namespace jrl_qp_controller {
 
     /* -- angular momentum task */
     angular_momentum_task_ = new AngularMomentumTask(robot_);
-    angular_momentum_task_->set_gain(50);
-    angular_momentum_task_->weight(1);
+    angular_momentum_task_->set_gain(10);
+    angular_momentum_task_->weight(0.1);
 
     /* -- min torque task on the arms */
     std::vector<double> weights(robot_->getActuatedJoints().size());
@@ -154,30 +178,40 @@ namespace jrl_qp_controller {
 	weights[(*joint_it)->rankInConfiguration() -6] = 1;
       }
     }
+    std::vector<CjrlJoint*> head_joints = 
+      robot_->jointsBetween(*(robot_->rootJoint()), *(robot_->gazeJoint()));
+    for(std::vector<CjrlJoint*>::const_iterator joint_it = head_joints.begin();
+	joint_it != head_joints.end(); ++joint_it) {
+      if((*joint_it)->numberDof() == 0)
+	continue;
+      if (*joint_it != robot_->rootJoint()) {  //ignore free flyer
+	weights[(*joint_it)->rankInConfiguration() -6] = 1;
+      }
+    }
     min_torque_task_ = new MinTorqueTask(robot_);
     min_torque_task_->set_joint_torque_weights(weights);
-    min_torque_task_->weight(1);
+    min_torque_task_->weight(0.1);
 
     /*
       Create contact point vectors
-    */
+    */    
     // for nao: <origin rpy="0 0 0" xyz="0.02 0 0.0075"/>
     //          <box size="0.16 0.06 0.015"/>
     /* -- left foot */
-    ContactConstraint * contact_l_1 = new ContactConstraint(robot_,robot_->leftAnkle(),vector3d(0.10,0.03,-0.0075),vector3d(0,0,1),50);
-    ContactConstraint * contact_l_2 = new ContactConstraint(robot_,robot_->leftAnkle(),vector3d(0.10,-0.03,-0.0075),vector3d(0,0,1),50);
-    ContactConstraint * contact_l_3 = new ContactConstraint(robot_,robot_->leftAnkle(),vector3d(-0.06,0.03,-0.0075),vector3d(0,0,1),50);
-    ContactConstraint * contact_l_4 = new ContactConstraint(robot_,robot_->leftAnkle(),vector3d(-0.06,-0.03,-0.0075),vector3d(0,0,1),50);
+    ContactConstraint * contact_l_1 = new ContactConstraint(robot_,robot_->leftAnkle(),vector3d(0.10,0.03,0),vector3d(0,0,1),0.7);
+    ContactConstraint * contact_l_2 = new ContactConstraint(robot_,robot_->leftAnkle(),vector3d(0.10,-0.03,0),vector3d(0,0,1),0.7);
+    ContactConstraint * contact_l_3 = new ContactConstraint(robot_,robot_->leftAnkle(),vector3d(-0.06,0.03,0),vector3d(0,0,1),0.7);
+    ContactConstraint * contact_l_4 = new ContactConstraint(robot_,robot_->leftAnkle(),vector3d(-0.06,-0.03,0),vector3d(0,0,1),0.7);
     left_foot_contacts_.push_back(contact_l_1);
     left_foot_contacts_.push_back(contact_l_2);
     left_foot_contacts_.push_back(contact_l_3);
     left_foot_contacts_.push_back(contact_l_4);
 
     /* -- right foot */
-    ContactConstraint * contact_r_1 = new ContactConstraint(robot_,robot_->rightAnkle(),vector3d(0.10,0.03,-0.0075),vector3d(0,0,1),50);
-    ContactConstraint * contact_r_2 = new ContactConstraint(robot_,robot_->rightAnkle(),vector3d(0.10,-0.03,-0.0075),vector3d(0,0,1),50);
-    ContactConstraint * contact_r_3 = new ContactConstraint(robot_,robot_->rightAnkle(),vector3d(-0.06,0.03,-0.0075),vector3d(0,0,1),50);
-    ContactConstraint * contact_r_4 = new ContactConstraint(robot_,robot_->rightAnkle(),vector3d(-0.06,-0.03,-0.0075),vector3d(0,0,1),50);
+    ContactConstraint * contact_r_1 = new ContactConstraint(robot_,robot_->rightAnkle(),vector3d(0.10,0.03,0),vector3d(0,0,1),0.7);
+    ContactConstraint * contact_r_2 = new ContactConstraint(robot_,robot_->rightAnkle(),vector3d(0.10,-0.03,0),vector3d(0,0,1),0.7);
+    ContactConstraint * contact_r_3 = new ContactConstraint(robot_,robot_->rightAnkle(),vector3d(-0.06,0.03,0),vector3d(0,0,1),0.7);
+    ContactConstraint * contact_r_4 = new ContactConstraint(robot_,robot_->rightAnkle(),vector3d(-0.06,-0.03,0),vector3d(0,0,1),0.7);
     right_foot_contacts_.push_back(contact_r_1);
     right_foot_contacts_.push_back(contact_r_2);
     right_foot_contacts_.push_back(contact_r_3);
@@ -191,7 +225,8 @@ namespace jrl_qp_controller {
     /* Allocate qp problem */
     problem_ = new ProblemOases(robot_);
 
-    /* Add foot tasks */
+    /* Add tasks */
+    problem_->add_task(nao_hip_task_);
     problem_->add_task(left_foot_task_);
     problem_->add_task(right_foot_task_);
     problem_->add_task(config_task_);
@@ -200,8 +235,6 @@ namespace jrl_qp_controller {
     problem_->add_task(angular_momentum_task_);
     problem_->add_task(min_torque_task_);
 
-   ROS_DEBUG_STREAM("Ankle height: " 
-		    << robot_->leftAnkle()->currentTransformation()(2,3));
 
     /* Check and add contacts */
     update_contacts();
@@ -213,6 +246,11 @@ namespace jrl_qp_controller {
     time_ = 0;
     last_state_change_ = 0;
     problem_->resize_data();
+
+    /* Set torque limits */
+    std::vector<double> l(robot_->getActuatedJoints().size(),-20);
+    std::vector<double> u(robot_->getActuatedJoints().size(),20);
+    problem_->set_torque_limits(l,u);
   }
 
   void
@@ -263,6 +301,7 @@ namespace jrl_qp_controller {
 	left_foot_task_->weight(1);
 	x_start_ = robot_->leftAnkle()->currentTransformation()(0,3);
 	x_target_ = robot_->rightAnkle()->currentTransformation()(0,3) + step_length_;
+	x_support_ = robot_->rightAnkle()->currentTransformation()(0,3);
       }
       break;
     case RIGHT_SUPPORT:
@@ -279,6 +318,7 @@ namespace jrl_qp_controller {
 	right_foot_task_->weight(1);
 	x_start_ = robot_->rightAnkle()->currentTransformation()(0,3);
 	x_target_ = robot_->leftAnkle()->currentTransformation()(0,3) + step_length_;
+	x_support_ = robot_->leftAnkle()->currentTransformation()(0,3);
       }
       break;
     case LEFT_SUPPORT:
@@ -301,6 +341,9 @@ namespace jrl_qp_controller {
     std::vector<double> acceleration(solution.begin(),solution.begin()
 				     + robot_->numberDof());
     update_robot(acceleration,time_step_);
+    //std::vector<double> torques = problem_->solution_torques();
+    //std::copy(torques.begin(),torques.end(), msg_->torques.begin());
+    write_config();
     time_ += time_step_;
     ROS_DEBUG_STREAM("Simulated time: " << time_ );
   }
@@ -308,11 +351,27 @@ namespace jrl_qp_controller {
   void
   LocomotionController::update_com_task()
   {
-    com_target_(0) = com_x_shift_
+    /*
+    double x = com_x_shift_
       + 0.5 * robot_->rightAnkle()->currentTransformation()(0,3)
       + 0.5 * robot_->leftAnkle()->currentTransformation()(0,3);
+    */
+    double x = x_target_ + com_x_shift_;
+    switch(current_state_) {
+    case RIGHT_SUPPORT:
+    case LEFT_SUPPORT:
+      x = cubic_interpolation(x_support_ +  com_x_shift_,x_target_ + com_x_shift_,
+			      foot_flight_duration_,time_ - last_state_change_);
+      break;
+    default:
+      break;
+    }
+
+    com_target_(0) = x;
     com_target_(1) = 
-      com_amplitude_ * sin ((M_PI/(foot_flight_duration_ + double_support_duration_)) * time_  + com_phase_);
+      com_amplitude_ * 
+            ((sin ((M_PI/(foot_flight_duration_ + double_support_duration_)) * time_  + com_phase_) > 0 ) ? 1 : -1) * 
+      sqrt(fabs(sin ((M_PI/(foot_flight_duration_ + double_support_duration_)) * time_  + com_phase_)));
     //com_task_->targetXY(com_target_(0),com_target_(1));
     com_task_->target(com_target_);
   }
@@ -320,14 +379,24 @@ namespace jrl_qp_controller {
   void
   LocomotionController::update_foot_tasks()
   {
-    double x = cubic_interpolation(x_start_,x_target_,
-				   foot_flight_duration_,time_ - last_state_change_);
     double z = (time_ - last_state_change_ <= 0.5 * foot_flight_duration_)?
       cubic_interpolation(ankle_height_, ankle_height_ + step_height_,
 			  0.5*foot_flight_duration_, time_ - last_state_change_):
       cubic_interpolation(ankle_height_ + step_height_, ankle_height_,
 			  0.5*foot_flight_duration_, time_ - last_state_change_ - 0.5*foot_flight_duration_);
-    double weight = 1 + (foot_flight_duration_ - time_ + last_state_change_);
+
+    double x = cubic_interpolation(x_start_,x_target_,
+				   foot_flight_duration_,time_ - last_state_change_);
+    if ( time_ - last_state_change_ <= 0.35 * foot_flight_duration_)
+      x = x_start_;
+    else if ( time_ - last_state_change_ <= 0.7 * foot_flight_duration_)
+      x = cubic_interpolation(x_start_,x_target_,
+			      0.3 * foot_flight_duration_,time_ - last_state_change_ -0.35*foot_flight_duration_);
+    else
+      x = x_target_;
+   
+    double weight = 
+      1 + 99*(time_ - last_state_change_)/foot_flight_duration_;
 
     switch(current_state_) {
     case RIGHT_SUPPORT:
@@ -403,6 +472,14 @@ namespace jrl_qp_controller {
     angular_momentum_task_->weight(i_am_task_weight);
   }
 
+  void 
+  LocomotionController::torque_task_weight(double i_t_task_weight)
+  {
+    if(!min_torque_task_)
+      return;
+    min_torque_task_->weight(i_t_task_weight);
+  }
+
   void
   LocomotionController::time_step(double i_time_step)
   {
@@ -419,6 +496,48 @@ namespace jrl_qp_controller {
     com_amplitude(i_msg->com_amplitude);
     com_phase(i_msg->com_phase);
     trunk_angle(i_msg->trunk_angle);
+    am_task_weight(i_msg->am_task_weight);
+    torque_task_weight(i_msg->torque_task_weight);
   }
 
+  bool
+  LocomotionController::compute_command(jrl_controller_manager::GetCommand::Request &req,
+					jrl_controller_manager::GetCommand::Response &res)
+  {
+    fill_joints(req.current_state);
+    compute_one_step();
+    res.command = *msg_;
+    return true;
+  }
+
+  void
+  LocomotionController::write_joints()
+  {
+    std::vector<CjrlJoint*> joints = robot_->getActuatedJoints();
+    for (std::vector<CjrlJoint*>::iterator it = joints.begin();
+	 it != joints.end();
+	 it++) {
+      seqplay_file_ << (*it)->getName() << " ";
+    }
+    seqplay_file_ << "\n" ;
+  }
+
+  void
+  LocomotionController::write_config()
+  {
+    vectorN config = robot_->currentConfiguration();
+    std::vector<CjrlJoint*> joints = robot_->getActuatedJoints();
+    for (std::vector<CjrlJoint*>::iterator it = joints.begin();
+	 it != joints.end();
+	 it++) {
+      seqplay_file_ << config((*it)->rankInConfiguration()) << " ";
+    }
+    seqplay_file_ << "\n";
+  }
+
+  void
+  LocomotionController::close_stream()
+  {
+    seqplay_file_.close();
+  }
 } //end of namespace jrl_qp_controller

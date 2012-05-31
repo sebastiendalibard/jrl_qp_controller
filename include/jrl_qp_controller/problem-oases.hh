@@ -37,7 +37,10 @@ namespace jrl_qp_controller {
     void reset_contacts();
     const std::map<ContactConstraint *,bool>& get_contacts() const;
     unsigned int count_activated_contacts() const;
-    
+
+    /*
+      Enforcing joint torques limits. Should be called after resize_data()
+     */
     void set_torque_limits(std::vector<double> &i_l,
 			   std::vector<double> &i_u);
 

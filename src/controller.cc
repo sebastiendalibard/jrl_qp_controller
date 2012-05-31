@@ -42,6 +42,7 @@ namespace jrl_qp_controller {
     odom_tf_ = new TransformStamped;
 
     control_size_ = robot_->getActuatedJoints().size();
+    msg_->torques.resize(control_size_);
     current_configuration_.resize(nb_dofs);
     current_velocity_.resize(nb_dofs);
     current_acceleration_.resize(nb_dofs);
@@ -79,6 +80,22 @@ namespace jrl_qp_controller {
     }
   }
 
+  void Controller::fill_joints(sensor_msgs::JointState& msg)
+  {
+    if (msg.name.size() != robot_->numberDof()) {
+      std::cerr << "jrl_qp_controller received joint_state message of invalid size.\n";
+      return;
+    }
+
+    for(unsigned int i = 0; i < msg.name.size(); ++i) {
+      current_configuration_(i) = msg.position[i];
+      current_velocity_(i) = msg.velocity[i];
+    }
+    robot_->currentConfiguration(current_configuration_);
+    robot_->currentVelocity(current_velocity_);
+  }
+
+
   void Controller::compute_robot_dynamics() {
     robot_->currentAcceleration(zero_acceleration_);
 
@@ -99,8 +116,12 @@ namespace jrl_qp_controller {
   Controller::update_robot(std::vector<double>& acceleration, double delta_t)
   {
     assert(acceleration.size() == robot_->numberDof());
+    for(unsigned int i = 0; i < robot_->numberDof(); ++i)
+      current_acceleration_(i) = acceleration[i];
+
     current_configuration_ = robot_->currentConfiguration();
     current_velocity_ = robot_->currentVelocity();
+
     current_velocity_ *= delta_t;
     current_velocity_ += 0.5*delta_t*delta_t * current_acceleration_;
 
@@ -118,11 +139,12 @@ namespace jrl_qp_controller {
     current_velocity_ = robot_->currentVelocity();
     current_velocity_ += delta_t * current_acceleration_;
 
-    for(unsigned int i = 0; i < robot_->numberDof(); ++i)
-      current_acceleration_(i) = acceleration[i];
-
     robot_->currentConfiguration(current_configuration_);
     robot_->currentVelocity(current_velocity_);
+
+    /* output new velocity as the command */
+    for(unsigned int i = 6; i < robot_->numberDof(); ++i)
+      msg_->torques[i-6] = current_velocity_(i);
   }
 
   void

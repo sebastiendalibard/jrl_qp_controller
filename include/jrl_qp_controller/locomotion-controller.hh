@@ -1,6 +1,8 @@
 #ifndef JRL_QP_CONTROLLER_LOCOMOTION_CONTROLLER_H
 #define JRL_QP_CONTROLLER_LOCOMOTION_CONTROLLER_H
 
+#include <fstream>
+
 #include <abstract-robot-dynamics/humanoid-dynamic-robot.hh>
 
 #include <jrl_qp_controller/transformation-task.hh>
@@ -11,9 +13,13 @@
 #include <jrl_qp_controller/problem-oases.hh>
 #include <jrl_qp_controller/angular-momentum-task.hh>
 #include <jrl_qp_controller/min-torque-task.hh>
+#include <jrl_qp_controller/nao-hip-task.hh>
+
 
 #include <jrl_qp_controller/controller.hh>
 #include <jrl_qp_controller/LocomotionParameters.h>
+
+#include <jrl_controller_manager/GetCommand.h>
 
 namespace jrl_qp_controller {
   
@@ -39,6 +45,9 @@ namespace jrl_qp_controller {
 
     void compute_one_step();
 
+    bool compute_command(jrl_controller_manager::GetCommand::Request &req,
+			 jrl_controller_manager::GetCommand::Response &res);
+
     /*
       Checks which potential contact points are on the ground,
       and updates the qp problem.
@@ -48,6 +57,10 @@ namespace jrl_qp_controller {
     
     void update_foot_tasks();
     void update_com_task();
+
+    void write_joints();
+    void write_config();
+    void close_stream();
     
     /*
       Locomotion parameter setters
@@ -59,6 +72,7 @@ namespace jrl_qp_controller {
     void com_amplitude(double i_com_amplitude);
     void com_phase(double i_com_phase);
     void am_task_weight(double i_am_task_weight);
+    void torque_task_weight(double i_am_task_weight);
     void trunk_angle(double i_angle);
 
     /*
@@ -126,8 +140,13 @@ namespace jrl_qp_controller {
       Current foot trajectories
     */
     double ankle_height_;
-    double x_start_,x_target_;
+    double x_start_,x_target_,x_support_;
     double y_left_, y_right_;
+
+    /*
+      Seq-play file
+    */
+    std::fstream seqplay_file_;
  
   };
 } //end of namespace jrl_qp_controller

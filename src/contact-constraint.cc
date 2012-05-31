@@ -125,9 +125,6 @@ namespace jrl_qp_controller {
     first_call_ = false;
 
     noalias(dyn_mat_) = prod(MAL_RET_TRANSPOSE(jacobian_), friction_basis_);
-
-    ROS_DEBUG_STREAM("contact: " << this);
-    ROS_DEBUG_STREAM("jacobian: " << jacobian_);
   }
 
   void

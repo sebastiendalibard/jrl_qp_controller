@@ -99,9 +99,10 @@ namespace jrl_qp_controller {
       Constraints: 
       * dynamic equation (n_dofs)
       * positive acceleration (1D) of contact point (n_contacts)
+      * normal contact superior to a threshold (n_contacts)
    
       */
-    n_rows_ = n_dofs + n_contacts ;
+    n_rows_ = n_dofs + 2*n_contacts ;
     n_columns_ = n_dofs + n_actuated_dofs + 3*n_contacts;
 
     A_.resize(n_rows_,n_columns_,false);
@@ -213,9 +214,9 @@ namespace jrl_qp_controller {
 
   void
   ProblemOases::set_torque_limits(vector<double> &i_l,
-			     vector<double> &i_u)
+				  vector<double> &i_u)
   {
-    for(unsigned int i = 0; i < robot_->numberDof(); ++i) {
+    for(unsigned int i = 0; i < robot_->getActuatedJoints().size(); ++i) {
       l_[robot_->numberDof() + i] = i_l[i];
       u_[robot_->numberDof() + i] = i_u[i];
     }
@@ -250,6 +251,31 @@ namespace jrl_qp_controller {
 	  A_(current_row,j) = 0;
 	}
       }
+      ++current_row;
+    }
+
+    /*
+      For each activated contact, the normal reaction should be
+      greater than a threshold.
+    */
+    double threshold = 0.05 * robot_->mass() / count_activated_contacts() ;
+    unsigned int current_column = robot_->numberDof() + robot_->getActuatedJoints().size();
+    for (map<ContactConstraint*,bool>::iterator contact_it = contacts_.begin();
+	 contact_it != contacts_.end(); 
+	 ++contact_it) {
+      if((*contact_it).second) { //contact is activated
+	for (unsigned int j = 0; j < 3; ++j) {
+	  A_(current_row,current_column + j) = 1;
+	}
+	bl_[current_row] = threshold; 
+      }
+      else {
+	for (unsigned int j = 0; j < 3; ++j) {
+	  A_(current_row,current_column + j) = 0;
+	}
+	bl_[current_row] = -std::numeric_limits<double>::infinity();
+      }
+      current_column += 3;
       ++current_row;
     }
   }
@@ -359,7 +385,7 @@ namespace jrl_qp_controller {
     for(unsigned int i = 0; i < robot_->numberDof(); ++i) {
       D_(i,i) += 1e-9;
     }
-    int wsr = 10000;
+    int wsr = 1000;
 
     boost::posix_time::ptime start, end;
     start = boost::posix_time::microsec_clock::local_time();

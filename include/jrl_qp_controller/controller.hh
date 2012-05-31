@@ -21,6 +21,8 @@ namespace jrl_qp_controller {
 
     void fill_joints(const sensor_msgs::JointStateConstPtr& msg);
 
+    void fill_joints(sensor_msgs::JointState& msg);
+
     void update_robot(std::vector<double>& acceleration, double delta_t);
 
     void compute_robot_dynamics();

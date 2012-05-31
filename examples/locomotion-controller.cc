@@ -1,3 +1,5 @@
+# include <boost/date_time/posix_time/posix_time.hpp>
+
 #include <tf/transform_broadcaster.h>
 #include <jrl/dynamics/urdf/parser.hh>
 #include <ros/console.h>
@@ -59,9 +61,10 @@ using namespace jrl_qp_controller;
        ++dof_it) {
      CjrlJoint* joint = parser.mapJrlJoint()[(*dof_it).first];
      if(!joint) {
-      throw std::runtime_error("");
+      throw std::runtime_error("incoherent joint map");
     }
-    half_sitting_config(joint->rankInConfiguration()) = M_PI /180.0 * ((*dof_it).second);
+     double value = M_PI /180.0 * ((*dof_it).second);
+     half_sitting_config(joint->rankInConfiguration()) = value;
    }
 
    controller.initialize(half_sitting_config);
@@ -75,6 +78,8 @@ using namespace jrl_qp_controller;
 
    ros::Publisher joint_state_pub = n.advertise<JointState>("joint_states",10);
    tf::TransformBroadcaster odom_broadcaster;
+   
+   boost::posix_time::ptime start, end;
 
    ros::AsyncSpinner spinner(1);
    spinner.start();
@@ -84,10 +89,14 @@ using namespace jrl_qp_controller;
      /* Publish robot state, including FF */
      joint_state_pub.publish(*(controller.joint_state_msg_));
      odom_broadcaster.sendTransform(*(controller.odom_tf_));
-     
+     start = boost::posix_time::microsec_clock::local_time();
      controller.compute_one_step();
+     end = boost::posix_time::microsec_clock::local_time();
+     boost::posix_time::time_duration duration = end - start;
+     long uDuration = duration.total_microseconds();
+     ROS_DEBUG_STREAM("Iteration time: " << ((double) uDuration * 1e-6) );
    }
-
+   controller.close_stream();
    spinner.stop();
    return 0;
 }
