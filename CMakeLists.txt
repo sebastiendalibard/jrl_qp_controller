@@ -55,7 +55,8 @@ rosbuild_add_library(${PROJECT_NAME}
   src/parallel-task.cc
   src/com-task.cc
   src/controller.cc
-  src/locomotion-controller.cc)
+  src/locomotion-controller.cc
+  src/nao-hip-task.cc)
 
 PKG_CONFIG_USE_DEPENDENCY(${PROJECT_NAME} hpp-gik)
 PKG_CONFIG_USE_DEPENDENCY(${PROJECT_NAME} qp-oases)

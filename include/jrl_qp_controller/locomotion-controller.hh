@@ -79,6 +79,7 @@ namespace jrl_qp_controller {
     /*
       Tasks
     */
+    NaoHipTask* nao_hip_task_;
     TransformationTask* left_foot_task_;
     TransformationTask* right_foot_task_;
     ConfigurationTask* config_task_;
